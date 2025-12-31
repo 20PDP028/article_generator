@@ -1,102 +1,87 @@
-import random
-USED_IDEAS = set()
+from collections import Counter
+from model_interface import generate_candidates
 
+USED_SENTENCES = set()
+STARTER_MEMORY = Counter()
 
-RARE_WORDS = {
-    "important": ["salient", "noteworthy"],
-    "improve": ["enhance", "strengthen"],
-    "use": ["employ", "utilize"],
-    "help": ["facilitate", "support"],
-    "role": ["function", "contribution"],
-    "show": ["demonstrate", "indicate"],
-    "many": ["numerous", "several"]
-}
-
-
-WRITING_STATES = ["analytical", "exploratory", "reflective", "assertive"]
-
-def apply_rare_words(sentence, max_replacements=1):
+# ---------------------------------------------
+# INFORMATION DENSITY (vagueness detector)
+# ---------------------------------------------
+def information_density(sentence):
     words = sentence.split()
-    replaced = 0
+    if not words:
+        return 0
+    return len(set(words)) / len(words)
 
-    for i, w in enumerate(words):
-        key = w.lower().strip(",.;")
-        if key in RARE_WORDS and replaced < max_replacements:
-            words[i] = RARE_WORDS[key][0]
-            replaced += 1
+# ---------------------------------------------
+# SENTENCE FUNCTION (STRUCTURAL)
+# ---------------------------------------------
+def sentence_function(sentence):
+    if sentence.endswith("?"):
+        return "question"
+    if "," in sentence and len(sentence.split()) > 20:
+        return "explanatory"
+    if len(sentence.split()) < 12:
+        return "assertive"
+    return "descriptive"
 
-    return " ".join(words)
-def maybe_split_sentence(sentence):
-    if " and " in sentence and len(sentence.split()) > 25:
-        parts = sentence.split(" and ", 1)
-        return [parts[0] + ".", "And " + parts[1]]
-    return [sentence]
+# ---------------------------------------------
+# HARD LOGIC GATE — OPTION A (STRICT)
+# ---------------------------------------------
+def passes_all_logics(sentence):
+    s = sentence.lower().strip()
 
+    # Starter repetition
+    starter = " ".join(s.split()[:2])
+    if STARTER_MEMORY[starter] >= 3:
+        return False
 
-def select_state(previous_state):
-    states = [s for s in WRITING_STATES if s != previous_state]
-    return random.choice(states)
+    # Exact repetition
+    if s in USED_SENTENCES:
+        return False
 
+    # Low information density
+    if information_density(s) < 0.45:
+        return False
 
+    # Encyclopedic structure
+    if ":" in s[:15] or s.startswith("("):
+        return False
+
+    return True
+
+# ---------------------------------------------
+# SENTENCE GENERATION (NO FALLBACK)
+# ---------------------------------------------
 def generate_sentence(chunk):
-    """
-    Human-like light rewrite:
-    - preserve sentence meaning
-    - keep grammar intact
-    - apply minimal variation
-    """
+    candidates = generate_candidates(chunk)
 
-    sentence = chunk.strip()
+    for sent in candidates:
+        if passes_all_logics(sent):
+            final = sent.strip()
+            if not final.endswith("."):
+                final += "."
 
-    # Ensure proper punctuation
-    if not sentence.endswith("."):
-        sentence += "."
+            USED_SENTENCES.add(final.lower())
+            STARTER_MEMORY[" ".join(final.lower().split()[:2])] += 1
+            return final
 
-    # Apply rare vocabulary (very limited)
-    sentence = apply_rare_words(sentence, max_replacements=1)
+    return None  # STRICT MODE
 
-    return sentence
-
-
-
-
-def generate_paragraph(chunks, previous_state=None, max_ref=0):
+# ---------------------------------------------
+# PARAGRAPH GENERATION
+# ---------------------------------------------
+def generate_paragraph(chunks):
     paragraph = []
-    state = select_state(previous_state)
-
-    sentence_count = random.randint(5, 7)
-    used_local = set()
-
     attempts = 0
-    max_attempts = sentence_count * 3
 
-    while len(paragraph) < sentence_count and attempts < max_attempts:
-        chunk = random.choice(chunks)
+    while len(paragraph) < 6 and attempts < 30:
         attempts += 1
+        sent = generate_sentence(chunks[attempts % len(chunks)])
+        if sent:
+            paragraph.append(sent)
 
-        # avoid repeating same idea in same paragraph
-        if chunk in used_local:
-            continue
+    if len(paragraph) < 3:
+        return None
 
-        sentence = generate_sentence(chunk)
-        sentence = maybe_add_citation(sentence, max_ref)
-        paragraph.append(sentence)
-
-
-        used_local.add(chunk)
-
-        # allow very limited global reuse
-        if random.random() < 0.25:
-            USED_IDEAS.add(chunk)
-
-    return paragraph, state
-def maybe_add_citation(sentence, max_ref):
-    """
-    Add Vancouver-style in-text citation occasionally
-    """
-    if random.random() < 0.3 and max_ref > 0:
-        ref_num = random.randint(1, max_ref)
-        if not sentence.endswith("."):
-            sentence += "."
-        sentence = sentence.replace(".", f" [{ref_num}].", 1)
-    return sentence
+    return paragraph
