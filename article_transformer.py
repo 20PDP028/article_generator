@@ -1,120 +1,58 @@
 import re
-import fitz
-from chunker import chunk_text
+import fitz  # PyMuPDF
 
+def load_article(pdf_path):
+    doc = fitz.open(pdf_path)
+    return "\n".join(page.get_text() for page in doc)
 
-def load_article(path):
-    if path.endswith(".pdf"):
-        doc = fitz.open(path)
-        text = ""
-        for page in doc:
-            text += page.get_text()
-        return text
+def extract_structured_sections(raw_text):
+    sections = []
+    current = {"title": "UNLABELED", "lines": []}
+    sections.append(current)
 
-    elif path.endswith(".txt"):
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
+    for line in raw_text.split("\n"):
+        clean = line.strip()
+        if not clean:
+            continue
 
-    else:
-        raise ValueError("Only PDF or TXT allowed")
+        # Structural heading detection (no keywords)
+        if clean.isupper() and len(clean.split()) <= 12:
+            current = {"title": clean, "lines": []}
+            sections.append(current)
+            continue
 
+        if clean.istitle() and len(clean.split()) <= 12:
+            current = {"title": clean, "lines": []}
+            sections.append(current)
+            continue
 
-def preprocess(text):
-    # Remove References section
-    text = re.split(r'References', text, flags=re.IGNORECASE)[0]
+        current["lines"].append(clean)
 
-    # Remove headings, tables, figures, keywords, abstract labels
-    remove_patterns = [
-        r'\bAbstract\b',
-        r'\bIntroduction\b',
-        r'\bConclusion\b',
-        r'\bKeywords?:.*',
-        r'\bTable\s*\d+.*',
-        r'\bFigure\s*\d+.*',
-        r'Pharmaceutical Care and SDG.*',
-        r'Integrating SDG 3 and SDG 17.*',
-        r'Challenges and Barriers.*',
-        r'Overview of the Sustainable Development Goals.*'
-    ]
+    return sections
 
-    for pattern in remove_patterns:
-        text = re.sub(pattern, ' ', text, flags=re.IGNORECASE)
+def chunk_sections(sections):
+    output = []
+    for sec in sections:
+        text = " ".join(sec["lines"])
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 40]
+        output.append({
+            "title": sec["title"],
+            "chunks": sentences
+        })
+    return output
 
-    # Remove multiple spaces and line breaks
-    text = re.sub(r'\s+', ' ', text)
+def extract_references(raw_text):
+    refs = []
+    started = False
+    for line in raw_text.split("\n"):
+        l = line.strip()
+        if "references" in l.lower():
+            started = True
+            continue
+        if started and len(l) > 20:
+            refs.append(l)
+    return refs
 
-    return text.strip()
-
-
-
-
-def article_to_chunks(path):
-    raw = load_article(path)
-    clean = preprocess(raw)
-    return chunk_text(clean)
-
-def classify_chunks_by_section(chunks):
-    """
-    Very simple heuristic-based section classifier
-    """
-
-    intro, discussion, conclusion = [], [], []
-
-    for c in chunks:
-        c_low = c.lower()
-
-        # Conclusion-like signals
-        if any(x in c_low for x in [
-            "in conclusion", "overall", "this review highlights",
-            "in summary", "future directions", "therefore"
-        ]):
-            conclusion.append(c)
-
-        # Introduction-like signals
-        elif any(x in c_low for x in [
-            "sustainable development goal", "sdg",
-            "world health organization", "global health",
-            "background", "overview", "framework"
-        ]):
-            intro.append(c)
-
-        # Default → discussion
-        else:
-            discussion.append(c)
-
-    return {
-        "introduction": intro,
-        "discussion": discussion,
-        "conclusion": conclusion
-    }
-def extract_references(text):
-    """
-    Extract references section from the original article
-    """
-    parts = re.split(r'References', text, flags=re.IGNORECASE)
-    if len(parts) > 1:
-        refs = parts[1]
-        lines = refs.split("\n")
-        clean_refs = []
-
-        for line in lines:
-            line = line.strip()
-            if len(line) > 10:
-                clean_refs.append(line)
-
-        return clean_refs
-
-    return []
 def format_references_vancouver(refs):
-    """
-    Simple Vancouver-style formatting:
-    numbering + cleaned lines
-    """
-    formatted = []
-
-    for i, ref in enumerate(refs, 1):
-        ref = ref.strip()
-        ref = ref.replace("  ", " ")
-        formatted.append(f"{i}. {ref}")
-
-    return formatted
+    return [re.sub(r"\s+", " ", r).strip() for r in refs]
